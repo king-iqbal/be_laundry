@@ -1,9 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 // MIDDLEWARE (Bumbu Wajib)
 app.use(express.json()); // Biar bisa membaca kiriman data JSON
@@ -11,10 +12,10 @@ app.use(cors());         // Jembatan wajib agar Vue.js temanmu tidak diblokir br
 
 // KONEKSI DATABASE
 const db = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: 'root',
-    database: 'db_cucian'
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    database: process.env.DB_NAME
 });
 
 db.connect((err) => {
@@ -113,6 +114,37 @@ app.get('/api/pesanan', (req, res) => {
         return res.json({
             status: "success",
             data: results
+        });
+    });
+});
+
+// 4. API: UPDATE STATUS PESANAN
+app.put('/api/pesanan/:id', (req, res) => {
+    const pesananId = req.params.id;
+    const { status } = req.body; 
+
+    // Validasi daftar status yang sesuai dengan ENUM di MySQL kamu
+    const statusResmi = ['belum siap', 'selesai', 'sudah diambil'];
+
+    if (!statusResmi.includes(status)) {
+        return res.status(400).json({ 
+            status: "error", 
+            message: "Status tidak valid! Pilihannya hanya: 'belum siap', 'selesai', atau 'sudah diambil'." 
+        });
+    }
+
+    const sql = "UPDATE pesanan SET status = ? WHERE id = ?";
+
+    db.query(sql, [status, pesananId], (err, result) => {
+        if (err) return res.status(500).json({ status: "error", message: err.message });
+        
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ status: "error", message: "Pesanan tidak ditemukan!" });
+        }
+
+        return res.json({
+            status: "success",
+            message: `Status pesanan ID ${pesananId} sukses diubah menjadi '${status}'!`
         });
     });
 });

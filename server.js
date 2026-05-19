@@ -1,4 +1,5 @@
 require('dotenv').config();
+const jwt = require('jsonwebtoken');
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
@@ -26,7 +27,7 @@ db.connect((err) => {
     console.log('Koneksi ke MySQL sukses dan aman!');
 });
 
-// 1. API: LOGIN
+// 1. API: LOGIN 
 app.post('/api/login', (req, res) => {
     const { email, password } = req.body;
     const sql = "SELECT * FROM users WHERE email = ? AND password = ?";
@@ -35,19 +36,46 @@ app.post('/api/login', (req, res) => {
         if (err) return res.status(500).json({ status: "error", message: err.message });
         
         if (results.length > 0) {
+            const user = results[0];
+            
+            // Data yang dibungkus: id user dan role-nya
+            const token = jwt.sign(
+                { id: user.id, role: user.role }, 
+                process.env.JWT_SECRET, 
+                { expiresIn: '1d' } // Token akan expired dalam 1 hari
+            );
+
             return res.json({
                 status: "success",
                 message: "Login berhasil!",
-                role: results[0].role
+                role: user.role,
+                token: token 
             });
         } else {
             return res.status(401).json({ status: "error", message: "Email atau password salah" });
         }
     });
 });
+// MIDDLEWARE: Satpam Pemeriksa Token JWT
+const verifyToken = (req, res, next) => {
+    // Menangkap token dari header (biasanya dikirim dengan format: "Bearer <token_panjang>")
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
 
+    // Kalau frontend tidak mengirim token sama sekali
+    if (!token) return res.status(401).json({ status: "error", message: "Akses ditolak! Kamu belum login." });
+
+    // Mengecek apakah tokennya asli dan belum kadaluarsa (berdasarkan JWT_SECRET)
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) return res.status(403).json({ status: "error", message: "Token tidak valid atau sudah kadaluarsa!" });
+        
+        // Kalau lolos, simpan data user (id, role) agar bisa dibaca oleh API di bawahnya
+        req.user = decoded; 
+        next(); // Persilakan masuk ke dalam API (melanjutkan proses)
+    });
+};
 // 2. API: TAMBAH PESANAN BARU + NOTA OTOMATIS (Gaya Industri)
-app.post('/api/pesanan', (req, res) => {
+app.post('/api/pesanan', verifyToken, (req, res) => {
     const { user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg } = req.body;
 
     // 1. Mulai Transaksi (Membuka gerbang aman)
@@ -106,7 +134,7 @@ app.post('/api/pesanan', (req, res) => {
 });
 
 // 3. API: AMBIL SEMUA PESANAN (Dashboard)
-app.get('/api/pesanan', (req, res) => {
+app.get('/api/pesanan', verifyToken, (req, res) => {
     const sql = "SELECT * FROM pesanan ORDER BY tgl_masuk DESC";
     
     db.query(sql, (err, results) => {
@@ -119,7 +147,7 @@ app.get('/api/pesanan', (req, res) => {
 });
 
 // 4. API: UPDATE STATUS PESANAN
-app.put('/api/pesanan/:id', (req, res) => {
+app.put('/api/pesanan/:id', verifyToken, (req, res) => {
     const pesananId = req.params.id;
     const { status } = req.body; 
 
@@ -145,6 +173,35 @@ app.put('/api/pesanan/:id', (req, res) => {
         return res.json({
             status: "success",
             message: `Status pesanan ID ${pesananId} sukses diubah menjadi '${status}'!`
+        });
+    });
+});
+
+// 5. API: HAPUS PESANAN (Batal Cuci / Salah Input)
+app.delete('/api/pesanan/:id', verifyToken, (req, res) => {
+    const pesananId = req.params.id;
+    
+    const sql = "DELETE FROM pesanan WHERE id = ?";
+
+    db.query(sql, [pesananId], (err, result) => {
+        if (err) {
+            // Menangani error jika pesanan ini sudah punya nota (terikat relasi)
+            if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+                return res.status(400).json({ 
+                    status: "error", 
+                    message: "Pesanan tidak bisa dihapus karena sudah memiliki nota cetak!" 
+                });
+            }
+            return res.status(500).json({ status: "error", message: err.message });
+        }
+        
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ status: "error", message: "Pesanan tidak ditemukan!" });
+        }
+
+        return res.json({
+            status: "success",
+            message: `Pesanan ID ${pesananId} berhasil dihapus dari sistem!`
         });
     });
 });

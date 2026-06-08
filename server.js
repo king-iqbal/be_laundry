@@ -101,9 +101,9 @@ app.post('/api/pesanan', verifyToken, (req, res) => {
             }
 
             const sqlPesanan = `INSERT INTO pesanan 
-                                 (user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, total_harga, tgl_masuk, status) 
-                                 VALUES (?, ?, ?, ?, ?, ?, CURDATE(), 'belum_dicuci')`;
-            const valuesPesanan = [user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, total_harga];
+                     (user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, tgl_masuk, status) 
+                     VALUES (?, ?, ?, ?, ?, CURDATE(), 'belum_dicuci')`;
+const valuesPesanan = [user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg];
 
             // 2. Eksekusi Input ke Tabel Pesanan (Pakai 'connection', bukan 'db')
             connection.query(sqlPesanan, valuesPesanan, (err, result) => {

@@ -84,12 +84,16 @@ const verifyToken = (req, res, next) => {
         next(); // Persilakan masuk ke dalam API (melanjutkan proses)
     });
 };
-/// 2. API: TAMBAH PESANAN BARU + NOTA OTOMATIS (Gaya Industri)
+// 2. API: TAMBAH PESANAN BARU + NOTA OTOMATIS (Gaya Industri)
 app.post('/api/pesanan', verifyToken, (req, res) => {
     const { user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg } = req.body;
-    const total_harga = berat_kg * harga_per_kg;
 
-    // 🔥 PERBAIKAN: Ambil 1 jalur koneksi khusus dari Pool
+    // 🔥 PERBAIKAN LOGIKA UI: Kalau user pesan dari HP, beratnya otomatis 0 dulu
+    const beratFinal = berat_kg || 0; 
+    const hargaFinal = harga_per_kg || 0;
+    const total_harga = beratFinal * hargaFinal;
+
+    // Ambil 1 jalur koneksi khusus dari Pool
     db.getConnection((err, connection) => {
         if (err) return res.status(500).json({ status: "error", message: "Gagal mendapat koneksi: " + err.message });
 
@@ -100,10 +104,13 @@ app.post('/api/pesanan', verifyToken, (req, res) => {
                 return res.status(500).json({ status: "error", message: err.message });
             }
 
+            // Status defaultnya 'belum_dicuci'
             const sqlPesanan = `INSERT INTO pesanan 
                      (user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, tgl_masuk, status) 
                      VALUES (?, ?, ?, ?, ?, CURDATE(), 'belum_dicuci')`;
-const valuesPesanan = [user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg];
+            
+            // 🔥 Gunakan beratFinal dan hargaFinal
+            const valuesPesanan = [user_id, jenis_layanan, metode_pembayaran, beratFinal, hargaFinal];
 
             // 2. Eksekusi Input ke Tabel Pesanan (Pakai 'connection', bukan 'db')
             connection.query(sqlPesanan, valuesPesanan, (err, result) => {
@@ -173,7 +180,7 @@ app.put('/api/pesanan/:id', verifyToken, (req, res) => {
     const { status } = req.body; 
 
     // Validasi daftar status yang sesuai dengan ENUM di MySQL kamu
-    const statusResmi = ['belum_dicuci', 'sedang_dicuci', 'selesai'];
+    const statusResmi = ['belum_dicuci', 'sedang_dicuci', 'menunggu_pembayaran', 'selesai'];
 
     if (!statusResmi.includes(status)) {
         return res.status(400).json({ 
@@ -235,17 +242,17 @@ app.listen(PORT, () => {
 
 // 6. API: REGISTER USER BARU
 app.post('/api/register', (req, res) => {
-    // Sesuaikan nama variabel dengan kolom yang ada di tabel 'users' milikmu
-    const { nama, email, password, role } = req.body; 
+    // 🔥 UPDATE: Tangkap no_telpon dan alamat dari frontend
+    const { nama, email, no_telpon, alamat, password, role } = req.body; 
 
     // Default role diset 'pelanggan' kalau frontend tidak mengirim role
     const userRole = role || 'pelanggan'; 
 
-    const sql = "INSERT INTO users (nama, email, password, role) VALUES (?, ?, ?, ?)";
+    // 🔥 UPDATE: Masukkan ke query SQL
+    const sql = "INSERT INTO users (nama, email, no_telpon, alamat, password, role) VALUES (?, ?, ?, ?, ?, ?)";
     
-    db.query(sql, [nama, email, password, userRole], (err, result) => {
+    db.query(sql, [nama, email, no_telpon, alamat, password, userRole], (err, result) => {
         if (err) {
-            // Error handling kalau email sudah pernah dipakai (Duplikat)
             if (err.code === 'ER_DUP_ENTRY') {
                 return res.status(400).json({ 
                     status: "error", 
@@ -326,3 +333,31 @@ app.get('/api/pesanan/me', verifyToken, (req, res) => {
     });
 });
 
+// 9. API: LAPORAN PENDAPATAN (Admin Dashboard)
+app.get('/api/laporan/pendapatan', verifyToken, (req, res) => {
+    // Keamanan: Cuma kasir/admin yang boleh lihat omzet!
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ status: "error", message: "Akses ditolak! Halaman ini khusus Admin." });
+    }
+
+    // Query untuk menjumlahkan semua uang masuk dari pesanan yang sudah 'selesai'
+    const sql = `
+        SELECT 
+            SUM(total_harga) AS total_pendapatan,
+            COUNT(Nomor_id) AS jumlah_transaksi
+        FROM pesanan
+        WHERE status = 'selesai'
+    `;
+
+    db.query(sql, (err, results) => {
+        if (err) return res.status(500).json({ status: "error", message: err.message });
+        
+        return res.json({
+            status: "success",
+            data: {
+                total_pendapatan: results[0].total_pendapatan || 0,
+                jumlah_transaksi: results[0].jumlah_transaksi || 0
+            }
+        });
+    });
+});

@@ -231,3 +231,98 @@ app.delete('/api/pesanan/:id', verifyToken, (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server Node.js berjalan di http://127.0.0.1:${PORT}`);
 });
+
+
+// 6. API: REGISTER USER BARU
+app.post('/api/register', (req, res) => {
+    // Sesuaikan nama variabel dengan kolom yang ada di tabel 'users' milikmu
+    const { nama, email, password, role } = req.body; 
+
+    // Default role diset 'pelanggan' kalau frontend tidak mengirim role
+    const userRole = role || 'pelanggan'; 
+
+    const sql = "INSERT INTO users (nama, email, password, role) VALUES (?, ?, ?, ?)";
+    
+    db.query(sql, [nama, email, password, userRole], (err, result) => {
+        if (err) {
+            // Error handling kalau email sudah pernah dipakai (Duplikat)
+            if (err.code === 'ER_DUP_ENTRY') {
+                return res.status(400).json({ 
+                    status: "error", 
+                    message: "Email ini sudah terdaftar, silakan gunakan email lain!" 
+                });
+            }
+            return res.status(500).json({ status: "error", message: err.message });
+        }
+        
+        return res.json({
+            status: "success",
+            message: "Akun baru berhasil didaftarkan! Silakan login."
+        });
+    });
+});
+
+// 7. API: LIHAT DETAIL NOTA (Struk Cucian)
+app.get('/api/nota/:pesanan_id', verifyToken, (req, res) => {
+    const pesananId = req.params.pesanan_id;
+
+    // 🔥 Teknik SQL JOIN untuk menggabungkan 3 tabel sekaligus
+    const sql = `
+        SELECT 
+            n.id AS id_nota, 
+            n.created_at AS tanggal_cetak,
+            p.Nomor_id AS id_pesanan,
+            p.jenis_layanan,
+            p.metode_pembayaran,
+            p.berat_kg,
+            p.harga_per_kg,
+            p.total_harga,
+            p.status,
+            u.nama AS nama_pelanggan
+        FROM nota n
+        JOIN pesanan p ON n.pesanan_id = p.Nomor_id
+        JOIN users u ON p.user_id = u.id
+        WHERE p.Nomor_id = ?
+    `;
+
+    db.query(sql, [pesananId], (err, results) => {
+        if (err) return res.status(500).json({ status: "error", message: err.message });
+        
+        // Kalau nota tidak ditemukan
+        if (results.length === 0) {
+            return res.status(404).json({ status: "error", message: "Nota untuk pesanan ini belum ada/tidak ditemukan!" });
+        }
+
+        // Kembalikan data index [0] karena hasil query pasti cuma 1 nota unik
+        return res.json({
+            status: "success",
+            data: results[0] 
+        });
+    });
+});
+
+// 8. API: RIWAYAT PESANAN KHUSUS PELANGGAN (User Dashboard)
+app.get('/api/pesanan/me', verifyToken, (req, res) => {
+    // Ambil ID pelanggan dari Token JWT yang lagi login
+    const idPelanggan = req.user.id; 
+
+    // Cari pesanan yang user_id-nya cuma milik pelanggan ini aja
+    const sql = `
+        SELECT p.*, n.id AS nota_id 
+        FROM pesanan p
+        LEFT JOIN nota n ON p.Nomor_id = n.pesanan_id
+        WHERE p.user_id = ? 
+        ORDER BY p.tgl_masuk DESC
+    `;
+    
+    db.query(sql, [idPelanggan], (err, results) => {
+        if (err) return res.status(500).json({ status: "error", message: err.message });
+        
+        return res.json({
+            status: "success",
+            message: "Ini riwayat pesanan khusus milikmu",
+            data: results
+        });
+    });
+});
+

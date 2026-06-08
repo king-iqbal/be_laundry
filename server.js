@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 5000;
 
 // MIDDLEWARE (Bumbu Wajib)
 app.use(express.json()); // Biar bisa membaca kiriman data JSON
-app.use(cors());         // Jembatan wajib agar Vue.js temanmu tidak diblokir browser
+app.use(cors());         
 
 // KONEKSI DATABASE
 const db = mysql.createConnection({
@@ -78,14 +78,18 @@ const verifyToken = (req, res, next) => {
 app.post('/api/pesanan', verifyToken, (req, res) => {
     const { user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg } = req.body;
 
+    // 🔥 INI TAMBAHANNYA: Menghitung total_harga otomatis
+    const total_harga = berat_kg * harga_per_kg;
+
     // 1. Mulai Transaksi (Membuka gerbang aman)
     db.beginTransaction((err) => {
         if (err) return res.status(500).json({ status: "error", message: err.message });
 
+        // 🔥 INI TAMBAHANNYA: Memasukkan total_harga ke dalam query INSERT
         const sqlPesanan = `INSERT INTO pesanan 
-                     (user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, tgl_masuk, status) 
-                     VALUES (?, ?, ?, ?, ?, CURDATE(), 'belum_dicuci')`;
-        const valuesPesanan = [user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg];
+                             (user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, total_harga, tgl_masuk, status) 
+                             VALUES (?, ?, ?, ?, ?, ?, CURDATE(), 'belum_dicuci')`;
+        const valuesPesanan = [user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, total_harga];
 
         // 2. Eksekusi Input ke Tabel Pesanan
         db.query(sqlPesanan, valuesPesanan, (err, result) => {
@@ -125,7 +129,8 @@ app.post('/api/pesanan', verifyToken, (req, res) => {
                     return res.json({
                         status: "success",
                         message: "Pesanan baru dan Nota otomatis berhasil dicatat!",
-                        pesanan_id: pesananId
+                        pesanan_id: pesananId,
+                        total_tagihan: total_harga // Biar Frontend juga tahu total harganya
                     });
                 });
             });
@@ -152,16 +157,16 @@ app.put('/api/pesanan/:id', verifyToken, (req, res) => {
     const { status } = req.body; 
 
     // Validasi daftar status yang sesuai dengan ENUM di MySQL kamu
-    const statusResmi = ['belum siap', 'selesai', 'sudah diambil'];
+    const statusResmi = ['belum_dicuci', 'sedang_dicuci', 'selesai'];
 
     if (!statusResmi.includes(status)) {
         return res.status(400).json({ 
             status: "error", 
-            message: "Status tidak valid! Pilihannya hanya: 'belum siap', 'selesai', atau 'sudah diambil'." 
-        });
-    }
+            message: "Status tidak valid! Pilihannya hanya: 'belum_dicuci', 'sedang_dicuci', atau 'selesai'." 
+    });
+}
 
-    const sql = "UPDATE pesanan SET status = ? WHERE id = ?";
+    const sql = "UPDATE pesanan SET status = ? WHERE Nomor_id = ?";
 
     db.query(sql, [status, pesananId], (err, result) => {
         if (err) return res.status(500).json({ status: "error", message: err.message });
@@ -181,7 +186,7 @@ app.put('/api/pesanan/:id', verifyToken, (req, res) => {
 app.delete('/api/pesanan/:id', verifyToken, (req, res) => {
     const pesananId = req.params.id;
     
-    const sql = "DELETE FROM pesanan WHERE id = ?";
+    const sql = "DELETE FROM pesanan WHERE Nomor_id = ?";
 
     db.query(sql, [pesananId], (err, result) => {
         if (err) {
@@ -210,5 +215,3 @@ app.delete('/api/pesanan/:id', verifyToken, (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server Node.js berjalan di http://127.0.0.1:${PORT}`);
 });
-
-module.exports = app;

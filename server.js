@@ -13,11 +13,16 @@ app.use(cors());
 
 // KONEKSI DATABASE
 // KONEKSI DATABASE MENGGUNAKAN POOL (Anti-Putus)
+// KONEKSI DATABASE MENGGUNAKAN POOL (Anti-Putus + SSL Aiven)
 const db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
+    port: process.env.DB_PORT, // 🔥 INI YANG KETINGGALAN TADI
+    ssl: {
+        rejectUnauthorized: false // 🔥 INI WAJIB AGAR AIVEN TIDAK MENOLAK KONEKSI
+    },
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0

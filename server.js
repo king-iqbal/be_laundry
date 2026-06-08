@@ -84,63 +84,69 @@ const verifyToken = (req, res, next) => {
         next(); // Persilakan masuk ke dalam API (melanjutkan proses)
     });
 };
-// 2. API: TAMBAH PESANAN BARU + NOTA OTOMATIS (Gaya Industri)
+/// 2. API: TAMBAH PESANAN BARU + NOTA OTOMATIS (Gaya Industri)
 app.post('/api/pesanan', verifyToken, (req, res) => {
     const { user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg } = req.body;
-
-    // 🔥 INI TAMBAHANNYA: Menghitung total_harga otomatis
     const total_harga = berat_kg * harga_per_kg;
 
-    // 1. Mulai Transaksi (Membuka gerbang aman)
-    db.beginTransaction((err) => {
-        if (err) return res.status(500).json({ status: "error", message: err.message });
+    // 🔥 PERBAIKAN: Ambil 1 jalur koneksi khusus dari Pool
+    db.getConnection((err, connection) => {
+        if (err) return res.status(500).json({ status: "error", message: "Gagal mendapat koneksi: " + err.message });
 
-        // 🔥 INI TAMBAHANNYA: Memasukkan total_harga ke dalam query INSERT
-        const sqlPesanan = `INSERT INTO pesanan 
-                             (user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, total_harga, tgl_masuk, status) 
-                             VALUES (?, ?, ?, ?, ?, ?, CURDATE(), 'belum_dicuci')`;
-        const valuesPesanan = [user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, total_harga];
-
-        // 2. Eksekusi Input ke Tabel Pesanan
-        db.query(sqlPesanan, valuesPesanan, (err, result) => {
+        // 1. Mulai Transaksi di jalur koneksi khusus ini
+        connection.beginTransaction((err) => {
             if (err) {
-                // Jika gagal, batalkan transaksi
-                return db.rollback(() => {
-                    if (err.code === 'ER_NO_REFERENCED_ROW_2') {
-                        return res.status(400).json({ status: "error", message: `User ID ${user_id} tidak terdaftar!` });
-                    }
-                    return res.status(500).json({ status: "error", message: err.message });
-                });
+                connection.release(); // Balikin koneksi kalau gagal
+                return res.status(500).json({ status: "error", message: err.message });
             }
 
-            // Ambil ID dari pesanan yang barusan lolos masuk
-            const pesananId = result.insertId; 
+            const sqlPesanan = `INSERT INTO pesanan 
+                                 (user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, total_harga, tgl_masuk, status) 
+                                 VALUES (?, ?, ?, ?, ?, ?, CURDATE(), 'belum_dicuci')`;
+            const valuesPesanan = [user_id, jenis_layanan, metode_pembayaran, berat_kg, harga_per_kg, total_harga];
 
-            const sqlNota = "INSERT INTO nota (pesanan_id, created_at) VALUES (?, NOW())";
-
-            // 3. Eksekusi Input ke Tabel Nota secara otomatis
-            db.query(sqlNota, [pesananId], (err, notaResult) => {
+            // 2. Eksekusi Input ke Tabel Pesanan (Pakai 'connection', bukan 'db')
+            connection.query(sqlPesanan, valuesPesanan, (err, result) => {
                 if (err) {
-                    // Jika tabel nota eror, batalkan juga pesanan yang di atas tadi!
-                    return db.rollback(() => {
-                        return res.status(500).json({ status: "error", message: "Gagal membuat nota: " + err.message });
+                    return connection.rollback(() => {
+                        connection.release();
+                        if (err.code === 'ER_NO_REFERENCED_ROW_2') {
+                            return res.status(400).json({ status: "error", message: `User ID ${user_id} tidak terdaftar!` });
+                        }
+                        return res.status(500).json({ status: "error", message: err.message });
                     });
                 }
 
-                // 4. Jika dua-duanya sukses tanpa eror, kunci data permanen (COMMIT)
-                db.commit((err) => {
+                const pesananId = result.insertId; 
+                const sqlNota = "INSERT INTO nota (pesanan_id, created_at) VALUES (?, NOW())";
+
+                // 3. Eksekusi Input ke Tabel Nota 
+                connection.query(sqlNota, [pesananId], (err, notaResult) => {
                     if (err) {
-                        return db.rollback(() => {
-                            return res.status(500).json({ status: "error", message: err.message });
+                        return connection.rollback(() => {
+                            connection.release();
+                            return res.status(500).json({ status: "error", message: "Gagal membuat nota: " + err.message });
                         });
                     }
-                    
-                    // Kirim balasan sukses ke Frontend
-                    return res.json({
-                        status: "success",
-                        message: "Pesanan baru dan Nota otomatis berhasil dicatat!",
-                        pesanan_id: pesananId,
-                        total_tagihan: total_harga // Biar Frontend juga tahu total harganya
+
+                    // 4. COMMIT (Kunci data permanen)
+                    connection.commit((err) => {
+                        if (err) {
+                            return connection.rollback(() => {
+                                connection.release();
+                                return res.status(500).json({ status: "error", message: err.message });
+                            });
+                        }
+                        
+                        // 🔥 PENTING: Kembalikan koneksi ke Pool setelah semua sukses
+                        connection.release(); 
+                        
+                        return res.json({
+                            status: "success",
+                            message: "Pesanan baru dan Nota otomatis berhasil dicatat!",
+                            pesanan_id: pesananId,
+                            total_tagihan: total_harga 
+                        });
                     });
                 });
             });

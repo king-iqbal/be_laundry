@@ -12,19 +12,24 @@ app.use(express.json()); // Biar bisa membaca kiriman data JSON
 app.use(cors());         
 
 // KONEKSI DATABASE
-const db = mysql.createConnection({
+// KONEKSI DATABASE MENGGUNAKAN POOL (Anti-Putus)
+const db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
-    database: process.env.DB_NAME
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-db.connect((err) => {
+db.getConnection((err, connection) => {
     if (err) {
         console.error('Gagal koneksi ke MySQL: ' + err.message);
         return;
     }
-    console.log('Koneksi ke MySQL sukses dan aman!');
+    console.log('Koneksi Pool ke MySQL sukses dan siap tempur di Railway!');
+    connection.release(); // Kembalikan koneksi agar bisa dipakai lagi
 });
 
 // 1. API: LOGIN 

@@ -210,3 +210,5 @@ app.delete('/api/pesanan/:id', verifyToken, (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server Node.js berjalan di http://127.0.0.1:${PORT}`);
 });
+
+module.exports = app;
